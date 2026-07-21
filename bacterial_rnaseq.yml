@@ -1,0 +1,24 @@
+name: BactRNAseq
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  # Keep this environment independent of the base Python 3.14 pin.
+  - python=3.11
+
+  # Read processing, mapping and quantification.
+  - openjdk=17
+  - trimmomatic=0.40
+  - bwa
+  - samtools
+  - subread
+  - fastqc
+  - multiqc
+
+  # Automatic bacterial genome annotation when no GFF is provided.
+  - prokka
+
+  # Differential expression analysis and the R runtime used by the script.
+  - r-base
+  - bioconductor-deseq2
+

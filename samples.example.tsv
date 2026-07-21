@@ -1,0 +1,8 @@
+sample	condition	r1	r2
+A1	Agar	reads/A1.R1.fq.gz	reads/A1.R2.fq.gz
+A2	Agar	reads/A2.R1.fq.gz	reads/A2.R2.fq.gz
+A3	Agar	reads/A3.R1.fq.gz	reads/A3.R2.fq.gz
+G1	Glucose	reads/G1.R1.fq.gz	reads/G1.R2.fq.gz
+G2	Glucose	reads/G2.R1.fq.gz	reads/G2.R2.fq.gz
+G3	Glucose	reads/G3.R1.fq.gz	reads/G3.R2.fq.gz
+
