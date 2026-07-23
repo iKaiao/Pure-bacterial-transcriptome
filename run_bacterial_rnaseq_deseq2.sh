@@ -291,11 +291,10 @@ fi
 # 4. BWA mapping, sorted BAM and mapping QC
 ########################################
 
-# samtools 1.x accepts `sort -o output.bam -`, whereas samtools 0.1.x
-# requires a BAM stream plus an output prefix. Detect the installed version
+# samtools 1.x accepts `sort -o output.bam`, whereas samtools 0.1.x
+# requires an input BAM plus an output prefix. Detect the installed version
 # once, rather than relying on `samtools sort --help` (whose output is not
-# stable in old releases). The legacy branch is the previously validated
-# BWA -> samtools view -> samtools sort command sequence.
+# stable in old releases).
 SAMTOOLS_INFO="$(samtools --version 2>&1 || samtools 2>&1 || true)"
 if grep -qE 'Version:[[:space:]]*0\.|samtools[[:space:]]+0\.' <<< "$SAMTOOLS_INFO"; then
     SAMTOOLS_LEGACY=1
@@ -303,15 +302,30 @@ else
     SAMTOOLS_LEGACY=0
 fi
 
-sort_alignment() {
-    local bam_out="$1"
+# Deliberately use on-disk temporary files rather than a BWA|samtools pipe.
+# This is more resilient to legacy samtools implementations that can report
+# a missing BGZF EOF marker when reading a streamed BAM.
+map_and_sort() {
+    local sample="$1"
+    local r1="$2"
+    local r2="$3"
+    local bam_out="$4"
+    local tmp_tag=".${sample}.map.$$"
+    local sam_tmp="$BAMDIR/${sample}${tmp_tag}.sam"
+    local unsorted_bam="$BAMDIR/${sample}${tmp_tag}.unsorted.bam"
+
+    bwa mem -t "$THREADS_MAP" \
+        -R "@RG\\tID:${sample}\\tSM:${sample}\\tPL:ILLUMINA" \
+        "$REF" "$r1" "$r2" > "$sam_tmp"
+    samtools view -bS "$sam_tmp" > "$unsorted_bam"
 
     if [[ "$SAMTOOLS_LEGACY" -eq 1 ]]; then
-        samtools view -bS - | \
-            samtools sort -@ "$THREADS_MAP" - "${bam_out%.bam}"
+        samtools sort "$unsorted_bam" "${bam_out%.bam}"
     else
-        samtools sort -@ "$THREADS_MAP" -o "$bam_out" -
+        samtools sort -@ "$THREADS_MAP" -o "$bam_out" "$unsorted_bam"
     fi
+
+    rm -f "$sam_tmp" "$unsorted_bam"
 }
 
 # samtools 0.1.x has no quickcheck. Reading the BAM header is used as a
@@ -335,10 +349,7 @@ for i in "${!SAMPLE_IDS[@]}"; do
         echo "[$(date '+%F %T')] Mapping already complete for $sample; skipping"
     else
         echo "[$(date '+%F %T')] Mapping $sample"
-        bwa mem -t "$THREADS_MAP" \
-            -R "@RG\\tID:${sample}\\tSM:${sample}\\tPL:ILLUMINA" \
-            "$REF" "${CLEAN_R1[$i]}" "${CLEAN_R2[$i]}" \
-            | sort_alignment "$bam"
+        map_and_sort "$sample" "${CLEAN_R1[$i]}" "${CLEAN_R2[$i]}" "$bam"
         samtools index "$bam"
     fi
     check_bam "$bam"

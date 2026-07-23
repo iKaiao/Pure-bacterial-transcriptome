@@ -195,7 +195,7 @@ Run the exact same command again with the **same `--out` directory**. The script
 
 ## Samtools compatibility
 
-The mapping step supports both current and legacy samtools interfaces. With samtools 1.x, the script uses `samtools sort -o`. With samtools 0.1.x, it automatically uses the validated legacy sequence `bwa mem | samtools view -bS - | samtools sort - <output_prefix>`. Because samtools 0.1.x does not provide `quickcheck`, the script verifies the BAM header with `samtools view -H` instead. No manual script editing is required.
+The mapping step supports both current and legacy samtools interfaces. It writes a temporary SAM and BAM before sorting rather than streaming BWA output directly into samtools; this avoids BGZF EOF errors observed with some legacy samtools installations. With samtools 1.x, the script uses `samtools sort -o`; with samtools 0.1.x, it uses the legacy input-BAM/output-prefix syntax. Because samtools 0.1.x does not provide `quickcheck`, the script verifies the BAM header with `samtools view -H` instead. No manual script editing is required.
 
 ## Troubleshooting
 
