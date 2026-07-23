@@ -264,16 +264,25 @@ fi
 ########################################
 
 # samtools 1.x accepts `sort -o output.bam -`, whereas samtools 0.1.x
-# requires a BAM stream plus an output prefix. The legacy branch retains the
-# previously validated BWA -> samtools view -> samtools sort command sequence.
+# requires a BAM stream plus an output prefix. Detect the installed version
+# once, rather than relying on `samtools sort --help` (whose output is not
+# stable in old releases). The legacy branch is the previously validated
+# BWA -> samtools view -> samtools sort command sequence.
+SAMTOOLS_INFO="$(samtools --version 2>&1 || samtools 2>&1 || true)"
+if grep -qE 'Version:[[:space:]]*0\.|samtools[[:space:]]+0\.' <<< "$SAMTOOLS_INFO"; then
+    SAMTOOLS_LEGACY=1
+else
+    SAMTOOLS_LEGACY=0
+fi
+
 sort_alignment() {
     local bam_out="$1"
 
-    if samtools sort --help 2>&1 | grep -q -- '-o FILE'; then
-        samtools sort -@ "$THREADS_MAP" -o "$bam_out" -
-    else
+    if [[ "$SAMTOOLS_LEGACY" -eq 1 ]]; then
         samtools view -bS - | \
             samtools sort -@ "$THREADS_MAP" - "${bam_out%.bam}"
+    else
+        samtools sort -@ "$THREADS_MAP" -o "$bam_out" -
     fi
 }
 
