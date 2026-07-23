@@ -83,6 +83,14 @@ while [[ $# -gt 0 ]]; do
             THREADS_TRIM="$2"
             THREADS_COUNT="$2"
             THREADS_PROKKA="$2"
+            # Mapping benefits from all requested cores. Keeping the Java
+            # trimming/counting/annotation steps at a moderate core count
+            # avoids unstable output or memory pressure on shared servers.
+            if (( THREADS_TRIM > 8 )); then
+                THREADS_TRIM=8
+                THREADS_COUNT=8
+                THREADS_PROKKA=8
+            fi
             shift 2
             ;;
         --feature) FEATURE="$2"; shift 2 ;;
@@ -239,16 +247,36 @@ for i in "${!SAMPLE_IDS[@]}"; do
     CLEAN_R1+=("$p1")
     CLEAN_R2+=("$p2")
 
-    if [[ -s "$p1" && -s "$p2" ]]; then
+    if [[ -s "$p1" && -s "$p2" ]] && gzip -t "$p1" "$p2" 2>/dev/null; then
         echo "[$(date '+%F %T')] Trimming already complete for $sample; skipping"
         continue
     fi
+    if [[ -e "$p1" || -e "$p2" ]]; then
+        echo "[$(date '+%F %T')] Incomplete clean FASTQ detected for $sample; trimming again"
+    fi
     echo "[$(date '+%F %T')] Trimming $sample"
+
+    # Write to unique temporary files first. Final clean files are only
+    # replaced after the paired outputs pass a gzip integrity check, so an
+    # interrupted Trimmomatic run cannot be mistaken for a completed one.
+    tmp_tag=".${sample}.trim.$$"
+    tp1="$TRIMDIR/${sample}.R1.paired${tmp_tag}.fq.gz"
+    tu1="$TRIMDIR/${sample}.R1.unpaired${tmp_tag}.fq.gz"
+    tp2="$TRIMDIR/${sample}.R2.paired${tmp_tag}.fq.gz"
+    tu2="$TRIMDIR/${sample}.R2.unpaired${tmp_tag}.fq.gz"
     trimmomatic PE -threads "$THREADS_TRIM" -phred33 \
-        "$r1" "$r2" "$p1" "$u1" "$p2" "$u2" \
+        "$r1" "$r2" "$tp1" "$tu1" "$tp2" "$tu2" \
         "ILLUMINACLIP:${ADAPTER}:2:30:10" \
         LEADING:3 TRAILING:3 SLIDINGWINDOW:4:15 MINLEN:36 \
         > "$LOGDIR/${sample}.trimmomatic.log" 2>&1
+    gzip -t "$tp1" "$tp2" 2>/dev/null || {
+        echo "ERROR: Trimmomatic created an incomplete paired FASTQ for $sample. See $LOGDIR/${sample}.trimmomatic.log" >&2
+        exit 1
+    }
+    mv -f "$tp1" "$p1"
+    mv -f "$tu1" "$u1"
+    mv -f "$tp2" "$p2"
+    mv -f "$tu2" "$u2"
 done
 unset _JAVA_OPTIONS
 
