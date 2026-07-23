@@ -76,16 +76,18 @@ Notes:
 This example compares Agar with Glucose. Positive log2 fold changes indicate higher expression in Agar.
 
 ```bash
-bash run_bacterial_rnaseq_deseq2.sh \
-  --genome ZY112.fasta \
-  --gff ZY112.gff \
-  --samples samples.tsv \
-  --out RNAseq_Agar_vs_Glucose \
-  --condition-a Agar \
-  --condition-b Glucose \
-  --strand 2 \
+bash ./run_bacterial_rnaseq_deseq2.sh \
+  --genome ./genome.fna \
+  --gff ./genome.gff \
+  --samples ./samples.tsv \
+  --out ./RNAseq_TS_vs_CK \
+  --condition-a TS \
+  --condition-b CK \
+  --strand 0 \
+  --adapter /home/hello2/anaconda3/envs/BactRNAseq/share/trimmomatic-0.40-0/adapters/TruSeq3-PE.fa \
   --threads 20 \
   --fastqc
+
 ```
 
 ### Without a GFF3 annotation
