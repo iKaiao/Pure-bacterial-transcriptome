@@ -42,6 +42,40 @@ If no GFF is available, omit `--gff`. The script copies the reference FASTA into
 <output_directory>/prokka_annotation/annotation.gff
 ```
 
+### Adapter FASTA for Trimmomatic
+
+The `--adapter` file is **not a genome or gene annotation**. It is a small FASTA file containing the sequencing-adapter sequences used to construct the library. In short inserts, a read can extend through the cDNA insert and into this adapter sequence. Trimmomatic removes that non-biological sequence before mapping; otherwise, read quality and alignment can be adversely affected.
+
+Choose the adapter according to the **library-preparation kit stated by the sequencing provider or in the library construction report**. It does not depend on the bacterium, the treatment, or whether the reads are agar/glucose samples. For a normal paired-end Illumina TruSeq library, use `TruSeq3-PE.fa`. Do not choose an adapter merely because its filename looks newer.
+
+| Library kit / evidence in the report | Adapter file to use |
+| --- | --- |
+| Illumina TruSeq paired-end library; no conflicting kit information | `TruSeq3-PE.fa` |
+| Explicitly states an older TruSeq 2 paired-end kit | `TruSeq2-PE.fa` |
+| Explicitly states Nextera paired-end library preparation | `NexteraPE-PE.fa` |
+| A custom kit or the provider supplies adapter sequences | Use the supplied adapter FASTA or request the exact paired-end adapter sequences from the provider |
+
+For paired-end reads, select a file with `PE` in its name, not an `SE` (single-end) file. `TruSeq3-PE.fa` contains the mate-specific adapters needed by Trimmomatic's `ILLUMINACLIP` step.
+
+After activating the pipeline environment, list the adapter files installed with Trimmomatic:
+
+```bash
+conda activate BactRNAseq
+find "$CONDA_PREFIX/share" -type f -path '*trimmomatic*/adapters/*.fa' -print
+```
+
+Typical output includes a path similar to:
+
+```text
+/home/your_user/anaconda3/envs/BactRNAseq/share/trimmomatic-0.40-0/adapters/TruSeq3-PE.fa
+```
+
+Use the full path returned on **your own server**; do not copy the example path literally. Supplying it explicitly is recommended for reproducibility:
+
+```bash
+--adapter "$CONDA_PREFIX/share/trimmomatic-0.40-0/adapters/TruSeq3-PE.fa"
+```
+
 ### Sample manifest
 
 Copy and edit the template:
