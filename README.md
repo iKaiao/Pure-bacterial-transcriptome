@@ -159,10 +159,13 @@ DESeq2 uses its default **median-of-ratios** size-factor normalization, negative
 
 Run the exact same command again with the **same `--out` directory**. The script skips completed trimming outputs, sorted/indexed BAM files, an existing count table, and an existing Prokka annotation. DESeq2 result files are regenerated.
 
+## Samtools compatibility
+
+The mapping step supports both current and legacy samtools interfaces. With samtools 1.x, the script uses `samtools sort -o`. With samtools 0.1.x, it automatically uses the validated legacy sequence `bwa mem | samtools view -bS - | samtools sort - <output_prefix>`. Because samtools 0.1.x does not provide `quickcheck`, the script verifies the BAM header with `samtools view -H` instead. No manual script editing is required.
+
 ## Troubleshooting
 
 1. **featureCounts reports zero Assigned reads:** first check that GFF and FASTA contig names match exactly; then verify `--strand`.
 2. **Trimmomatic cannot find the adapter FASTA:** pass the full path explicitly with `--adapter /full/path/TruSeq3-PE.fa`.
 3. **The contrast is reversed:** confirm the order of `--condition-a` and `--condition-b`. Results are always reported as `condition-a / condition-b`, so positive values are higher in the first condition.
 4. **No GFF is available:** do not manually rename contigs. Omit `--gff` and let the script annotate the current reference FASTA with Prokka.
-

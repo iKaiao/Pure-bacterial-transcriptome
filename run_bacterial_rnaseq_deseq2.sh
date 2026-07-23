@@ -262,6 +262,33 @@ fi
 ########################################
 # 4. BWA mapping, sorted BAM and mapping QC
 ########################################
+
+# samtools 1.x accepts `sort -o output.bam -`, whereas samtools 0.1.x
+# requires a BAM stream plus an output prefix. The legacy branch retains the
+# previously validated BWA -> samtools view -> samtools sort command sequence.
+sort_alignment() {
+    local bam_out="$1"
+
+    if samtools sort --help 2>&1 | grep -q -- '-o FILE'; then
+        samtools sort -@ "$THREADS_MAP" -o "$bam_out" -
+    else
+        samtools view -bS - | \
+            samtools sort -@ "$THREADS_MAP" - "${bam_out%.bam}"
+    fi
+}
+
+# samtools 0.1.x has no quickcheck. Reading the BAM header is used as a
+# compatible integrity check in that case.
+check_bam() {
+    local bam_in="$1"
+
+    if samtools quickcheck --help >/dev/null 2>&1; then
+        samtools quickcheck -v "$bam_in"
+    else
+        samtools view -H "$bam_in" >/dev/null
+    fi
+}
+
 BAMS=()
 for i in "${!SAMPLE_IDS[@]}"; do
     sample="${SAMPLE_IDS[$i]}"
@@ -274,10 +301,10 @@ for i in "${!SAMPLE_IDS[@]}"; do
         bwa mem -t "$THREADS_MAP" \
             -R "@RG\\tID:${sample}\\tSM:${sample}\\tPL:ILLUMINA" \
             "$REF" "${CLEAN_R1[$i]}" "${CLEAN_R2[$i]}" \
-            | samtools sort -@ "$THREADS_MAP" -o "$bam" -
-        samtools index -@ "$THREADS_MAP" "$bam"
+            | sort_alignment "$bam"
+        samtools index "$bam"
     fi
-    samtools quickcheck -v "$bam"
+    check_bam "$bam"
     samtools flagstat "$bam" > "$QCDIR/${sample}.flagstat.txt"
     samtools idxstats "$bam" > "$QCDIR/${sample}.idxstats.txt"
 done
@@ -435,4 +462,3 @@ Rscript "$RSCRIPT" "$COUNTS" "$OUTDIR/samples.tsv" "$CONDITION_A" "$CONDITION_B"
 echo "[$(date '+%F %T')] Workflow complete"
 echo "DESeq2 results: $DESEQDIR/DESeq2_${TAG}.csv"
 echo "Full log: $LOGDIR/pipeline.log"
-
