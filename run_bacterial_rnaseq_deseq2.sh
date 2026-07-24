@@ -37,7 +37,8 @@ Useful optional options:
   --threads N            Bowtie2 mapping threads (default 8); Trimmomatic and featureCounts use 8, samtools sort uses 4.
   --feature TEXT         GFF feature to count (default: CDS).
   --attribute TEXT       GFF attribute used as gene ID (default: locus_tag).
-  --fastqc               Run FastQC before and after trimming (if FastQC is installed).
+  --fastqc               Run FastQC and MultiQC on trimmed paired reads (default).
+  --no-fastqc            Skip FastQC and MultiQC.
   --help                 Show this help.
 
 samples.tsv example (header required; paths are relative to the directory in which you run):
@@ -66,7 +67,7 @@ THREADS_PROKKA=8
 THREADS_SORT=4
 FEATURE="CDS"
 ATTRIBUTE="locus_tag"
-RUN_FASTQC=0
+RUN_FASTQC=1
 JAVA_HEAP="8g"
 
 while [[ $# -gt 0 ]]; do
@@ -86,6 +87,7 @@ while [[ $# -gt 0 ]]; do
         --feature) FEATURE="$2"; shift 2 ;;
         --attribute) ATTRIBUTE="$2"; shift 2 ;;
         --fastqc) RUN_FASTQC=1; shift ;;
+        --no-fastqc) RUN_FASTQC=0; shift ;;
         --help|-h) usage; exit 0 ;;
         *) echo "ERROR: Unknown option: $1" >&2; usage >&2; exit 1 ;;
     esac
@@ -116,7 +118,8 @@ if [[ -z "$GFF" ]]; then
     }
 fi
 if [[ "$RUN_FASTQC" -eq 1 ]]; then
-    command -v fastqc >/dev/null 2>&1 || { echo "ERROR: --fastqc was requested but fastqc is unavailable." >&2; exit 1; }
+    command -v fastqc >/dev/null 2>&1 || { echo "ERROR: fastqc is unavailable. Use --no-fastqc to skip this step." >&2; exit 1; }
+    command -v multiqc >/dev/null 2>&1 || { echo "ERROR: multiqc is unavailable. Use --no-fastqc to skip this step." >&2; exit 1; }
 fi
 
 ########################################
@@ -214,17 +217,7 @@ fi
 [[ -s "$GFF" ]] || { echo "ERROR: Annotation GFF is missing after setup: $GFF" >&2; exit 1; }
 
 ########################################
-# 2. Optional FastQC before trimming
-########################################
-if [[ "$RUN_FASTQC" -eq 1 && ! -s "$QCDIR/fastqc_raw/.done" ]]; then
-    mkdir -p "$QCDIR/fastqc_raw"
-    echo "[$(date '+%F %T')] FastQC before trimming"
-    fastqc -t "$THREADS_TRIM" -o "$QCDIR/fastqc_raw" "${R1_FILES[@]}" "${R2_FILES[@]}"
-    touch "$QCDIR/fastqc_raw/.done"
-fi
-
-########################################
-# 3. Trim adapters and low-quality sequence
+# 2. Trim adapters and low-quality sequence
 ########################################
 export _JAVA_OPTIONS="-Xmx${JAVA_HEAP}"
 CLEAN_R1=()
@@ -273,11 +266,14 @@ for i in "${!SAMPLE_IDS[@]}"; do
 done
 unset _JAVA_OPTIONS
 
-if [[ "$RUN_FASTQC" -eq 1 && ! -s "$QCDIR/fastqc_clean/.done" ]]; then
-    mkdir -p "$QCDIR/fastqc_clean"
-    echo "[$(date '+%F %T')] FastQC after trimming"
-    fastqc -t "$THREADS_TRIM" -o "$QCDIR/fastqc_clean" "${CLEAN_R1[@]}" "${CLEAN_R2[@]}"
-    touch "$QCDIR/fastqc_clean/.done"
+########################################
+# 3. FastQC and MultiQC on cleaned paired reads
+########################################
+if [[ "$RUN_FASTQC" -eq 1 && ! -s "$QCDIR/multiqc_report.html" ]]; then
+    echo "[$(date '+%F %T')] FastQC on trimmed paired reads"
+    fastqc -t "$THREADS_TRIM" -o "$QCDIR" "${CLEAN_R1[@]}" "${CLEAN_R2[@]}"
+    echo "[$(date '+%F %T')] MultiQC summary"
+    multiqc "$QCDIR" -o "$QCDIR" > "$LOGDIR/multiqc.log" 2>&1
 fi
 
 ########################################

@@ -24,7 +24,7 @@ conda env create -f bacterial_rnaseq.yml
 conda activate BactRNAseq
 ```
 
-The environment contains Trimmomatic, Bowtie2, SAMtools, Subread/featureCounts, FastQC, Prokka, R, and DESeq2. For later runs, simply activate it with `conda activate BactRNAseq`.
+The environment contains Trimmomatic, Bowtie2, SAMtools, Subread/featureCounts, FastQC, MultiQC, Prokka, R, and DESeq2. For later runs, simply activate it with `conda activate BactRNAseq`.
 
 ## 2. Prepare the inputs
 
@@ -119,8 +119,7 @@ bash ./run_bacterial_rnaseq_deseq2.sh \
   --condition-b CK \
   --strand 0 \
   --adapter /home/hello2/anaconda3/envs/BactRNAseq/share/trimmomatic-0.40-0/adapters/TruSeq3-PE.fa \
-  --threads 20 \
-  --fastqc
+  --threads 20
 
 ```
 
@@ -166,7 +165,7 @@ The major outputs are written under the directory passed to `--out`:
 ├── clean/                         # Adapter- and quality-trimmed paired/unpaired FASTQ files
 ├── reference/                     # Reference FASTA used for mapping and Bowtie2 index files
 ├── bam/                           # Coordinate-sorted and indexed BAM files
-├── qc/                            # flagstat, idxstats, and optional FastQC reports
+├── qc/                            # FastQC, MultiQC, flagstat, and idxstats reports
 ├── counts/
 │   ├── raw_counts.sN.txt          # featureCounts raw read-count table
 │   └── raw_counts.sN.txt.summary  # Read-assignment summary for each sample
