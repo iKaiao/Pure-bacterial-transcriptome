@@ -372,6 +372,8 @@ TAG="${TAG// /_}"
 RSCRIPT="$DESEQDIR/run_deseq2_${TAG}.R"
 cat > "$RSCRIPT" <<'RSCRIPT_EOF'
 suppressPackageStartupMessages(library(DESeq2))
+suppressPackageStartupMessages(library(ggplot2))
+suppressPackageStartupMessages(library(ggrepel))
 
 args <- commandArgs(trailingOnly = TRUE)
 if (length(args) != 5) {
@@ -436,7 +438,8 @@ res_df <- res_df[order(res_df$padj, na.last = TRUE), ]
 
 tag <- gsub(" ", "_", paste0(condition_a, "_vs_", condition_b))
 write.csv(res_df, file.path(out_dir, paste0("DESeq2_", tag, ".csv")), row.names = FALSE)
-norm_counts <- as.data.frame(counts(dds, normalized = TRUE))
+norm_matrix <- counts(dds, normalized = TRUE)
+norm_counts <- as.data.frame(norm_matrix)
 norm_counts$Geneid <- rownames(norm_counts)
 norm_counts <- norm_counts[, c("Geneid", meta$sample)]
 write.csv(norm_counts, file.path(out_dir, "DESeq2_normalized_counts.csv"), row.names = FALSE)
@@ -469,18 +472,103 @@ pdf(file.path(out_dir, "MA_plot.pdf"), width = 6, height = 5)
 plotMA(res, ylim = c(-8, 8), alpha = 0.05)
 dev.off()
 
-neg_log10_padj <- -log10(pmax(res_df$padj, .Machine$double.xmin))
-neg_log10_padj[is.na(neg_log10_padj)] <- 0
-colour <- ifelse(res_df$direction == paste("Up in", condition_a), "#D55E00",
-                 ifelse(res_df$direction == paste("Up in", condition_b), "#0072B2", "#BDBDBD"))
-pdf(file.path(out_dir, paste0("volcano_DESeq2_", tag, ".pdf")), width = 7, height = 6)
-plot(res_df$log2FoldChange, neg_log10_padj, pch = 16, cex = 0.45, col = colour,
-     xlab = bquote(log[2]~"fold change (" * .(condition_a) * " / " * .(condition_b) * ")"),
-     ylab = expression(-log[10]~"BH-adjusted P value"),
-     main = paste("DESeq2:", condition_a, "versus", condition_b))
-abline(v = c(-1, 1), h = -log10(0.05), lty = 2, col = "grey40")
-legend("topright", legend = c(paste("Up in", condition_a), paste("Up in", condition_b), "Not significant"),
-       col = c("#D55E00", "#0072B2", "#BDBDBD"), pch = 16, bty = "n")
+# Volcano plot: five categories, palette, labels and layout matched to Fig. 4.
+plot_df <- res_df
+plot_df$neg_log10_padj <- -log10(pmax(plot_df$padj, .Machine$double.xmin))
+plot_df$neg_log10_padj[is.na(plot_df$neg_log10_padj) | !is.finite(plot_df$neg_log10_padj)] <- 0
+
+# "Down" and "Up" denote log2 fold-change direction; the significant variants
+# additionally meet padj < 0.05. This preserves the five-category Fig. 4 legend.
+plot_df$Differential_Significance <- "Non-significant"
+plot_df$Differential_Significance[!is.na(plot_df$log2FoldChange) & plot_df$log2FoldChange <= -1] <- "Down"
+plot_df$Differential_Significance[!is.na(plot_df$log2FoldChange) & plot_df$log2FoldChange >= 1] <- "Up"
+plot_df$Differential_Significance[!is.na(plot_df$padj) & plot_df$padj < 0.05 & plot_df$log2FoldChange <= -1] <- "Significant Down"
+plot_df$Differential_Significance[!is.na(plot_df$padj) & plot_df$padj < 0.05 & plot_df$log2FoldChange >= 1] <- "Significant Up"
+plot_df$Differential_Significance <- factor(
+  plot_df$Differential_Significance,
+  levels = c("Down", "Non-significant", "Significant Down", "Significant Up", "Up")
+)
+
+# Keep labels selective: very significant genes, or significant genes whose
+# normalized expression is high in both conditions. A trailing J-style locus
+# identifier after a pipe/semicolon is removed from the displayed label.
+mean_a <- rowMeans(norm_matrix[, as.character(meta$condition) == condition_a, drop = FALSE])
+mean_b <- rowMeans(norm_matrix[, as.character(meta$condition) == condition_b, drop = FALSE])
+plot_df$mean_expression_a <- mean_a[match(plot_df$Geneid, names(mean_a))]
+plot_df$mean_expression_b <- mean_b[match(plot_df$Geneid, names(mean_b))]
+plot_df$both_conditions_expression <- pmin(plot_df$mean_expression_a, plot_df$mean_expression_b)
+positive_both <- plot_df$both_conditions_expression[is.finite(plot_df$both_conditions_expression) & plot_df$both_conditions_expression > 0]
+both_high_cutoff <- if (length(positive_both)) unname(stats::quantile(positive_both, 0.98)) else Inf
+very_significant <- !is.na(plot_df$padj) & plot_df$padj < 1e-4 & abs(plot_df$log2FoldChange) >= 1
+both_high <- !is.na(plot_df$padj) & plot_df$padj < 0.05 & abs(plot_df$log2FoldChange) >= 1 &
+  plot_df$both_conditions_expression >= both_high_cutoff
+label_candidates <- which(very_significant | both_high)
+label_candidates <- label_candidates[order(plot_df$padj[label_candidates], -abs(plot_df$log2FoldChange[label_candidates]), na.last = TRUE)]
+label_candidates <- head(label_candidates, 25L)
+plot_df$display_label <- sub("[|;][[:space:]]*J[[:alnum:]_.-]+.*$", "", plot_df$Geneid)
+plot_df$display_label <- sub("[[:space:]]+J[[:alnum:]_.-]+$", "", plot_df$display_label)
+plot_df$display_label[!nzchar(plot_df$display_label)] <- plot_df$Geneid[!nzchar(plot_df$display_label)]
+label_df <- plot_df[label_candidates, , drop = FALSE]
+
+volcano_colours <- c(
+  "Down" = "#A6CEE3",
+  "Non-significant" = "#999999",
+  "Significant Down" = "#377EB8",
+  "Significant Up" = "#E41A1C",
+  "Up" = "#FB9A99"
+)
+
+volcano_plot <- ggplot(plot_df, aes(x = log2FoldChange, y = neg_log10_padj,
+                                    colour = Differential_Significance)) +
+  geom_point(size = 1.9, alpha = 0.90) +
+  scale_colour_manual(values = volcano_colours, drop = FALSE, name = "Differential Significance") +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.08)), breaks = scales::pretty_breaks(n = 4)) +
+  labs(
+    title = sprintf("Volcano Plot of Gene Expression Differences (%s vs %s)", condition_a, condition_b),
+    x = expression(log[2]*"(Fold Change)"),
+    y = expression(-log[10]*"(Adjusted P Value)")
+  ) +
+  theme_minimal(base_size = 12, base_family = "sans") +
+  theme(
+    plot.title = element_text(face = "bold", size = 16, hjust = 0.5, margin = margin(b = 16)),
+    axis.title = element_text(size = 15),
+    axis.text = element_text(size = 11, colour = "black"),
+    panel.grid.major = element_line(colour = "#EBEBEB", linewidth = 0.45),
+    panel.grid.minor = element_blank(),
+    legend.title = element_text(size = 15),
+    legend.text = element_text(size = 11),
+    legend.key = element_blank(),
+    legend.position = "right"
+  )
+
+if (nrow(label_df)) {
+  volcano_plot <- volcano_plot +
+    geom_text_repel(
+      data = label_df,
+      aes(x = log2FoldChange, y = neg_log10_padj, label = display_label),
+      inherit.aes = FALSE,
+      seed = 1,
+      size = 3.2,
+      colour = "#E41A1C",
+      max.overlaps = Inf,
+      box.padding = 0.35,
+      point.padding = 0.20,
+      min.segment.length = 0,
+      segment.colour = "#E41A1C",
+      show.legend = FALSE
+    )
+}
+
+write.csv(
+  plot_df[, c("Geneid", "baseMean", "log2FoldChange", "padj", "neg_log10_padj",
+              "Differential_Significance", "mean_expression_a", "mean_expression_b",
+              "both_conditions_expression", "display_label")],
+  file.path(out_dir, paste0("volcano_source_data_", tag, ".csv")),
+  row.names = FALSE
+)
+
+pdf(file.path(out_dir, paste0("volcano_DESeq2_", tag, ".pdf")), width = 13, height = 9, useDingbats = FALSE)
+print(volcano_plot)
 dev.off()
 
 summary_lines <- c(

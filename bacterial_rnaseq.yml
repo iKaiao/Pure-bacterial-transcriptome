@@ -21,3 +21,5 @@ dependencies:
   # Differential expression analysis and the R runtime used by the script.
   - r-base
   - bioconductor-deseq2
+  - r-ggplot2
+  - r-ggrepel
