@@ -576,6 +576,11 @@ pdf(file.path(out_dir, paste0("volcano_DESeq2_", tag, ".pdf")), width = 13, heig
 print(volcano_plot)
 dev.off()
 
+png(file.path(out_dir, paste0("volcano_DESeq2_", tag, ".png")),
+    width = 3900, height = 2700, res = 300, bg = "white")
+print(volcano_plot)
+dev.off()
+
 summary_lines <- c(
   paste0("Contrast: ", condition_a, " / ", condition_b, " (positive log2FC = higher in ", condition_a, ")"),
   "Normalization: DESeq2 median-of-ratios size factors",
