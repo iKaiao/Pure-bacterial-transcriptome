@@ -2,7 +2,7 @@
 
 A reusable paired-end bacterial RNA-seq differential-expression workflow:
 
-`Trimmomatic → BWA → featureCounts → DESeq2`
+`Trimmomatic → Bowtie2 → featureCounts → DESeq2`
 
 The pipeline is intended for bacterial RNA-seq data with a reference genome. Supply a GFF3 annotation when available. If no GFF3 file is supplied, the script automatically annotates the exact reference FASTA used for mapping with Prokka before read counting and differential-expression analysis.
 
@@ -24,7 +24,7 @@ conda env create -f bacterial_rnaseq.yml
 conda activate BactRNAseq
 ```
 
-The environment contains Trimmomatic, BWA, SAMtools, Subread/featureCounts, FastQC, Prokka, R, and DESeq2. For later runs, simply activate it with `conda activate BactRNAseq`.
+The environment contains Trimmomatic, Bowtie2, SAMtools, Subread/featureCounts, FastQC, Prokka, R, and DESeq2. For later runs, simply activate it with `conda activate BactRNAseq`.
 
 ## 2. Prepare the inputs
 
@@ -164,7 +164,7 @@ The major outputs are written under the directory passed to `--out`:
 ```text
 <out>/
 ├── clean/                         # Adapter- and quality-trimmed paired/unpaired FASTQ files
-├── reference/                     # Reference FASTA used for mapping and BWA index files
+├── reference/                     # Reference FASTA used for mapping and Bowtie2 index files
 ├── bam/                           # Coordinate-sorted and indexed BAM files
 ├── qc/                            # flagstat, idxstats, and optional FastQC reports
 ├── counts/
@@ -193,9 +193,9 @@ DESeq2 uses its default **median-of-ratios** size-factor normalization, negative
 
 Run the exact same command again with the **same `--out` directory**. The script skips completed trimming outputs, sorted/indexed BAM files, an existing count table, and an existing Prokka annotation. DESeq2 result files are regenerated.
 
-## Samtools compatibility
+## Mapping command used by this workflow
 
-The mapping step supports both current and legacy samtools interfaces. It writes a temporary SAM and BAM before sorting rather than streaming BWA output directly into samtools; this avoids BGZF EOF errors observed with some legacy samtools installations. With samtools 1.x, the script uses `samtools sort -o`; with samtools 0.1.x, it uses the legacy input-BAM/output-prefix syntax. Because samtools 0.1.x does not provide `quickcheck`, the script verifies the BAM header with `samtools view -H` instead. No manual script editing is required.
+The mapping step follows the validated command structure used in the original analysis: `bowtie2 --very-sensitive -p 8 ... | samtools sort -@ 4 -o <sample>.sorted.bam`. The script also runs `samtools quickcheck`, indexes each BAM, writes `flagstat`, and records the Bowtie2 overall alignment rate. It therefore requires a current SAMtools release that supports `sort -@ ... -o` and `quickcheck`; use the provided Conda environment rather than an older system-wide SAMtools executable.
 
 ## Troubleshooting
 

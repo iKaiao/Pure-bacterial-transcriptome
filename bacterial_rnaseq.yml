@@ -9,7 +9,7 @@ dependencies:
   # Read processing, mapping and quantification.
   - openjdk=17
   - trimmomatic=0.40
-  - bwa
+  - bowtie2
   - samtools
   - subread
   - fastqc
@@ -21,4 +21,3 @@ dependencies:
   # Differential expression analysis and the R runtime used by the script.
   - r-base
   - bioconductor-deseq2
-

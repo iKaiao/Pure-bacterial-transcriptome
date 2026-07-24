@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Generic paired-end bacterial RNA-seq workflow:
-# Trimmomatic -> BWA -> featureCounts -> DESeq2.
+# Trimmomatic -> Bowtie2 -> featureCounts -> DESeq2.
 #
 # Requirements in the active environment:
-#   trimmomatic, bwa, samtools, featureCounts, Rscript, and R package DESeq2.
+#   trimmomatic, bowtie2, samtools, featureCounts, Rscript, and R package DESeq2.
 #
 # The script is restart-safe: run the same command again with the same --out
 # directory to skip completed trimming, mapping and counting steps.
@@ -34,7 +34,7 @@ Required options:
 Useful optional options:
   --gff FILE             Gene annotation GFF3. If omitted, annotate the reference with Prokka.
   --adapter FILE         Trimmomatic PE adapter FASTA. Default: TruSeq3-PE.fa in the active Conda environment.
-  --threads N            Threads for mapping (default 12); trimming/counting use sensible caps.
+  --threads N            Bowtie2 mapping threads (default 8); Trimmomatic and featureCounts use 8, samtools sort uses 4.
   --feature TEXT         GFF feature to count (default: CDS).
   --attribute TEXT       GFF attribute used as gene ID (default: locus_tag).
   --fastqc               Run FastQC before and after trimming (if FastQC is installed).
@@ -59,10 +59,11 @@ CONDITION_A=""
 CONDITION_B=""
 STRAND=""
 ADAPTER=""
-THREADS_MAP=12
+THREADS_MAP=8
 THREADS_TRIM=8
 THREADS_COUNT=8
 THREADS_PROKKA=8
+THREADS_SORT=4
 FEATURE="CDS"
 ATTRIBUTE="locus_tag"
 RUN_FASTQC=0
@@ -80,17 +81,6 @@ while [[ $# -gt 0 ]]; do
         --adapter) ADAPTER="$2"; shift 2 ;;
         --threads)
             THREADS_MAP="$2"
-            THREADS_TRIM="$2"
-            THREADS_COUNT="$2"
-            THREADS_PROKKA="$2"
-            # Mapping benefits from all requested cores. Keeping the Java
-            # trimming/counting/annotation steps at a moderate core count
-            # avoids unstable output or memory pressure on shared servers.
-            if (( THREADS_TRIM > 8 )); then
-                THREADS_TRIM=8
-                THREADS_COUNT=8
-                THREADS_PROKKA=8
-            fi
             shift 2
             ;;
         --feature) FEATURE="$2"; shift 2 ;;
@@ -113,7 +103,7 @@ fi
 [[ -s "$SAMPLES_FILE" ]] || { echo "ERROR: Sample table not found: $SAMPLES_FILE" >&2; exit 1; }
 [[ -s "$ADAPTER" ]] || { echo "ERROR: Adapter FASTA not found: $ADAPTER" >&2; exit 1; }
 
-for tool in trimmomatic bwa samtools featureCounts Rscript; do
+for tool in trimmomatic bowtie2 bowtie2-build bowtie2-inspect samtools featureCounts Rscript; do
     command -v "$tool" >/dev/null 2>&1 || {
         echo "ERROR: '$tool' is unavailable. Activate an environment containing all pipeline tools." >&2
         exit 1
@@ -200,8 +190,11 @@ REF="$REFDIR/reference.fasta"
 if [[ ! -s "$REF" ]]; then
     cp "$GENOME" "$REF"
 fi
-[[ -s "$REF.fai" ]] || samtools faidx "$REF"
-[[ -s "$REF.bwt" ]] || bwa index "$REF"
+BOWTIE_INDEX="$REFDIR/reference"
+if ! bowtie2-inspect -s "$BOWTIE_INDEX" >/dev/null 2>&1; then
+    echo "[$(date '+%F %T')] Building Bowtie2 index"
+    bowtie2-build "$REF" "$BOWTIE_INDEX" > "$LOGDIR/bowtie2-build.log" 2>&1
+fi
 
 # If no annotation was supplied, create a Prokka annotation from the exact
 # reference FASTA used for mapping. The resulting GFF is then used directly
@@ -288,57 +281,8 @@ if [[ "$RUN_FASTQC" -eq 1 && ! -s "$QCDIR/fastqc_clean/.done" ]]; then
 fi
 
 ########################################
-# 4. BWA mapping, sorted BAM and mapping QC
+# 4. Bowtie2 mapping, sorted BAM and mapping QC
 ########################################
-
-# samtools 1.x accepts `sort -o output.bam`, whereas samtools 0.1.x
-# requires an input BAM plus an output prefix. Detect the installed version
-# once, rather than relying on `samtools sort --help` (whose output is not
-# stable in old releases).
-SAMTOOLS_INFO="$(samtools --version 2>&1 || samtools 2>&1 || true)"
-if grep -qE 'Version:[[:space:]]*0\.|samtools[[:space:]]+0\.' <<< "$SAMTOOLS_INFO"; then
-    SAMTOOLS_LEGACY=1
-else
-    SAMTOOLS_LEGACY=0
-fi
-
-# Deliberately use on-disk temporary files rather than a BWA|samtools pipe.
-# This is more resilient to legacy samtools implementations that can report
-# a missing BGZF EOF marker when reading a streamed BAM.
-map_and_sort() {
-    local sample="$1"
-    local r1="$2"
-    local r2="$3"
-    local bam_out="$4"
-    local tmp_tag=".${sample}.map.$$"
-    local sam_tmp="$BAMDIR/${sample}${tmp_tag}.sam"
-    local unsorted_bam="$BAMDIR/${sample}${tmp_tag}.unsorted.bam"
-
-    bwa mem -t "$THREADS_MAP" \
-        -R "@RG\\tID:${sample}\\tSM:${sample}\\tPL:ILLUMINA" \
-        "$REF" "$r1" "$r2" > "$sam_tmp"
-    samtools view -bS "$sam_tmp" > "$unsorted_bam"
-
-    if [[ "$SAMTOOLS_LEGACY" -eq 1 ]]; then
-        samtools sort "$unsorted_bam" "${bam_out%.bam}"
-    else
-        samtools sort -@ "$THREADS_MAP" -o "$bam_out" "$unsorted_bam"
-    fi
-
-    rm -f "$sam_tmp" "$unsorted_bam"
-}
-
-# samtools 0.1.x has no quickcheck. Reading the BAM header is used as a
-# compatible integrity check in that case.
-check_bam() {
-    local bam_in="$1"
-
-    if samtools quickcheck --help >/dev/null 2>&1; then
-        samtools quickcheck -v "$bam_in"
-    else
-        samtools view -H "$bam_in" >/dev/null
-    fi
-}
 
 BAMS=()
 for i in "${!SAMPLE_IDS[@]}"; do
@@ -349,13 +293,20 @@ for i in "${!SAMPLE_IDS[@]}"; do
         echo "[$(date '+%F %T')] Mapping already complete for $sample; skipping"
     else
         echo "[$(date '+%F %T')] Mapping $sample"
-        map_and_sort "$sample" "${CLEAN_R1[$i]}" "${CLEAN_R2[$i]}" "$bam"
+        bowtie2 --very-sensitive -p "$THREADS_MAP" \
+            -x "$BOWTIE_INDEX" \
+            -1 "${CLEAN_R1[$i]}" \
+            -2 "${CLEAN_R2[$i]}" \
+            2> "$LOGDIR/${sample}.bowtie2.log" \
+            | samtools sort -@ "$THREADS_SORT" -o "$bam"
         samtools index "$bam"
     fi
-    check_bam "$bam"
+    samtools quickcheck -q "$bam"
     samtools flagstat "$bam" > "$QCDIR/${sample}.flagstat.txt"
     samtools idxstats "$bam" > "$QCDIR/${sample}.idxstats.txt"
 done
+
+grep "overall alignment rate" "$LOGDIR"/*.bowtie2.log || true
 
 ########################################
 # 5. featureCounts
