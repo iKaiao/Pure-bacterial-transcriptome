@@ -508,6 +508,9 @@ label_candidates <- head(label_candidates, 25L)
 plot_df$display_label <- sub("[|;][[:space:]]*J[[:alnum:]_.-]+.*$", "", plot_df$Geneid)
 plot_df$display_label <- sub("[[:space:]]+J[[:alnum:]_.-]+$", "", plot_df$display_label)
 plot_df$display_label[!nzchar(plot_df$display_label)] <- plot_df$Geneid[!nzchar(plot_df$display_label)]
+# A bare locus tag (for example JIJAMHPJ_01268) has no biological meaning in a
+# manuscript figure. It remains in the source-data table but is not labelled.
+label_candidates <- label_candidates[!grepl("^J[[:alnum:]_.-]+$", plot_df$display_label[label_candidates])]
 label_df <- plot_df[label_candidates, , drop = FALSE]
 
 volcano_colours <- c(
@@ -535,6 +538,8 @@ volcano_plot <- ggplot(plot_df, aes(x = log2FoldChange, y = neg_log10_padj,
     axis.text = element_text(size = 11, colour = "black"),
     panel.grid.major = element_line(colour = "#EBEBEB", linewidth = 0.45),
     panel.grid.minor = element_blank(),
+    panel.background = element_rect(fill = "white", colour = NA),
+    plot.background = element_rect(fill = "white", colour = NA),
     legend.title = element_text(size = 15),
     legend.text = element_text(size = 11),
     legend.key = element_blank(),
@@ -567,7 +572,7 @@ write.csv(
   row.names = FALSE
 )
 
-pdf(file.path(out_dir, paste0("volcano_DESeq2_", tag, ".pdf")), width = 13, height = 9, useDingbats = FALSE)
+pdf(file.path(out_dir, paste0("volcano_DESeq2_", tag, ".pdf")), width = 13, height = 9, useDingbats = FALSE, bg = "white")
 print(volcano_plot)
 dev.off()
 
