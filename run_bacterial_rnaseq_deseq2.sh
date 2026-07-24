@@ -280,6 +280,54 @@ fi
 # 4. Bowtie2 mapping, sorted BAM and mapping QC
 ########################################
 
+# The command record uses modern `samtools sort -o`, but some existing
+# BactRNAseq installations use the older `<in.bam> <out.prefix>` interface.
+# Detect that interface from its own usage string and retain the same Bowtie2
+# alignment settings in both cases.
+SAMTOOLS_SORT_USAGE="$(samtools sort 2>&1 || true)"
+if grep -q '<in.bam> <out.prefix>' <<< "$SAMTOOLS_SORT_USAGE"; then
+    SAMTOOLS_LEGACY=1
+else
+    SAMTOOLS_LEGACY=0
+fi
+
+map_and_sort() {
+    local sample="$1"
+    local r1="$2"
+    local r2="$3"
+    local bam_out="$4"
+
+    if [[ "$SAMTOOLS_LEGACY" -eq 1 ]]; then
+        # Old samtools cannot consume Bowtie2 SAM directly in `sort` and has
+        # no `-o` option. Use completed temporary files to avoid stream EOFs.
+        local tmp_tag=".${sample}.map.$$"
+        local sam_tmp="$BAMDIR/${sample}${tmp_tag}.sam"
+        local unsorted_bam="$BAMDIR/${sample}${tmp_tag}.unsorted.bam"
+
+        bowtie2 --very-sensitive -p "$THREADS_MAP" \
+            -x "$BOWTIE_INDEX" -1 "$r1" -2 "$r2" \
+            > "$sam_tmp" 2> "$LOGDIR/${sample}.bowtie2.log"
+        samtools view -bS "$sam_tmp" > "$unsorted_bam"
+        samtools sort -@ "$THREADS_SORT" "$unsorted_bam" "${bam_out%.bam}"
+        rm -f "$sam_tmp" "$unsorted_bam"
+    else
+        bowtie2 --very-sensitive -p "$THREADS_MAP" \
+            -x "$BOWTIE_INDEX" -1 "$r1" -2 "$r2" \
+            2> "$LOGDIR/${sample}.bowtie2.log" \
+            | samtools sort -@ "$THREADS_SORT" -o "$bam_out"
+    fi
+}
+
+check_bam() {
+    local bam_in="$1"
+
+    if [[ "$SAMTOOLS_LEGACY" -eq 1 ]]; then
+        samtools view -H "$bam_in" >/dev/null
+    else
+        samtools quickcheck -q "$bam_in"
+    fi
+}
+
 BAMS=()
 for i in "${!SAMPLE_IDS[@]}"; do
     sample="${SAMPLE_IDS[$i]}"
@@ -289,15 +337,10 @@ for i in "${!SAMPLE_IDS[@]}"; do
         echo "[$(date '+%F %T')] Mapping already complete for $sample; skipping"
     else
         echo "[$(date '+%F %T')] Mapping $sample"
-        bowtie2 --very-sensitive -p "$THREADS_MAP" \
-            -x "$BOWTIE_INDEX" \
-            -1 "${CLEAN_R1[$i]}" \
-            -2 "${CLEAN_R2[$i]}" \
-            2> "$LOGDIR/${sample}.bowtie2.log" \
-            | samtools sort -@ "$THREADS_SORT" -o "$bam"
+        map_and_sort "$sample" "${CLEAN_R1[$i]}" "${CLEAN_R2[$i]}" "$bam"
         samtools index "$bam"
     fi
-    samtools quickcheck -q "$bam"
+    check_bam "$bam"
     samtools flagstat "$bam" > "$QCDIR/${sample}.flagstat.txt"
     samtools idxstats "$bam" > "$QCDIR/${sample}.idxstats.txt"
 done

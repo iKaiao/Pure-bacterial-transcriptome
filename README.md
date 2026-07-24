@@ -194,7 +194,7 @@ Run the exact same command again with the **same `--out` directory**. The script
 
 ## Mapping command used by this workflow
 
-The mapping step follows the validated command structure used in the original analysis: `bowtie2 --very-sensitive -p 8 ... | samtools sort -@ 4 -o <sample>.sorted.bam`. The script also runs `samtools quickcheck`, indexes each BAM, writes `flagstat`, and records the Bowtie2 overall alignment rate. It therefore requires a current SAMtools release that supports `sort -@ ... -o` and `quickcheck`; use the provided Conda environment rather than an older system-wide SAMtools executable.
+The mapping step follows the validated Bowtie2 settings used in the original analysis: `bowtie2 --very-sensitive -p 8`, followed by coordinate sorting with four SAMtools threads. With current SAMtools, it uses `samtools sort -@ 4 -o <sample>.sorted.bam`. If the active environment instead has the older `samtools sort <in.bam> <out.prefix>` interface, the script detects it automatically, converts the Bowtie2 SAM to a temporary BAM, and uses the required legacy sort syntax. Each BAM is indexed, checked, and accompanied by `flagstat` and the Bowtie2 overall alignment rate.
 
 ## Troubleshooting
 
