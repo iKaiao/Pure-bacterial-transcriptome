@@ -1,0 +1,37 @@
+package:
+  name: pure-bacterial-transcriptome
+  version: 0.1.0
+
+source:
+  path: ..
+
+build:
+  number: 0
+  skip: true  # [win]
+
+requirements:
+  build:
+    - rust >=1.89
+    - {{ compiler('c') }}
+    - {{ stdlib('c') }}
+  run:
+    - openjdk 17.*
+    - trimmomatic 0.40.*
+    - bowtie2
+    - subread >=2.0.2
+    - r-base
+    - bioconductor-deseq2
+    - r-ggplot2
+    - r-ggrepel
+
+test:
+  commands:
+    - pure-bacterial-transcriptome --version
+    - pure-bacterial-transcriptome --help
+    - bowtie2 --version
+    - featureCounts -v
+    - Rscript --vanilla -e 'stopifnot(requireNamespace("DESeq2"), requireNamespace("ggplot2"), requireNamespace("ggrepel"))'
+
+about:
+  home: https://github.com/iKaiao/Pure-bacterial-transcriptome
+  summary: Paired-end bacterial RNA-seq differential-expression workflow

@@ -6,13 +6,18 @@ A reusable paired-end bacterial RNA-seq differential-expression workflow:
 
 The pipeline is intended for bacterial RNA-seq data with a reference genome. Supply a GFF3 annotation when available. If no GFF3 file is supplied, the script automatically annotates the exact reference FASTA used for mapping with Prokka before read counting and differential-expression analysis.
 
+The Rust executable processes the Bowtie2 SAM stream, sorts and indexes BAM files, computes alignment statistics, and produces FASTQ quality reports. It invokes Trimmomatic for trimming, Bowtie2 for alignment, featureCounts for quantification, and R/DESeq2 for differential expression and its plots.
+
 ## Repository contents
 
 | File | Purpose |
 | --- | --- |
-| `run_bacterial_rnaseq_deseq2.sh` | Main workflow script |
+| `src/`, `Cargo.toml` | Rust workflow executable |
+| `run_deseq2.R` | Shared DESeq2 analysis and plots, embedded in the Rust executable |
+| `run_bacterial_rnaseq_deseq2.sh` | Original Bash entry point, run with `run_deseq2.R` alongside it |
 | `samples.example.tsv` | Example sample manifest |
 | `bacterial_rnaseq.yml` | Conda environment with all required tools |
+| `conda/` | Recipe for building and installing the Rust executable with its analysis dependencies |
 
 ## 1. Create the Conda environment
 
@@ -24,7 +29,31 @@ conda env create -f bacterial_rnaseq.yml
 conda activate BactRNAseq
 ```
 
-The environment contains Trimmomatic, Bowtie2, SAMtools, Subread/featureCounts, FastQC, MultiQC, Prokka, R, and DESeq2. For later runs, simply activate it with `conda activate BactRNAseq`.
+The environment contains Trimmomatic, Bowtie2, SAMtools, Subread/featureCounts, FastQC, MultiQC, Prokka, R, and DESeq2. For later runs, activate it with `conda activate BactRNAseq`.
+
+Build the Rust executable with Cargo and Rust 1.89 or newer. Run it from the environment above so the analysis tools are on `PATH`.
+
+```bash
+cargo build --locked --release
+./target/release/pure-bacterial-transcriptome --help
+```
+
+On Linux and macOS, use a Conda platform where the analysis dependencies resolve. On Windows, run the full workflow from Ubuntu under WSL 2 with Conda installed inside Ubuntu. Use paths visible to Ubuntu in command arguments and in the sample manifest, for example `/mnt/c/data/reads/A1.R1.fq.gz`.
+
+### Build and install the Conda package
+
+With `conda-build` available, build from the repository root and install the resulting package from the local channel.
+
+```bash
+CONDA_CHANNEL_PRIORITY=strict conda build --override-channels -c conda-forge -c bioconda \
+  --no-anaconda-upload --output-folder conda-bld conda
+conda create --override-channels --strict-channel-priority -c "$PWD/conda-bld" \
+  -c conda-forge -c bioconda -n BactRNAseqRust pure-bacterial-transcriptome
+conda activate BactRNAseqRust
+pure-bacterial-transcriptome --version
+```
+
+The package installs the executable and the tools needed when providing a GFF3 file. To generate an annotation automatically, make Prokka available on `PATH`. When its Perl dependencies conflict with the analysis environment, install Prokka separately and append its environment's `bin` directory to `PATH` after activating the analysis environment. Rust gives that directory priority only while running Prokka. A Rust toolchain is needed to build from source outside Conda.
 
 ## 2. Prepare the inputs
 
@@ -98,8 +127,8 @@ G3	Glucose	reads/G3.R1.fq.gz	reads/G3.R2.fq.gz
 
 Notes:
 
-- `sample` values must be unique and may contain only letters, numbers, `.`, `_`, and `-`.
-- `condition` values must exactly match `--condition-a` and `--condition-b`.
+- `sample` values must be unique ignoring case and may contain only letters, numbers, `.`, `_`, and `-`.
+- For a two-group experiment, `condition` values must match `--condition-a` or `--condition-b` exactly.
 - `r1` and `r2` may be absolute paths or paths relative to the directory from which the script is launched.
 - Each group needs at least two biological replicates; three or more are recommended.
 
@@ -108,27 +137,27 @@ Notes:
 ### With an existing GFF3 annotation
 
 This example compares Agar with Glucose. Positive log2 fold changes indicate higher expression in Agar.
+Use the executable installed by Conda, or substitute `./target/release/pure-bacterial-transcriptome` for a Cargo build.
 
 ```bash
-bash ./run_bacterial_rnaseq_deseq2.sh \
+pure-bacterial-transcriptome \
   --genome ./genome.fna \
   --gff ./genome.gff \
   --samples ./samples.tsv \
-  --out ./RNAseq_TS_vs_CK \
-  --condition-a TS \
-  --condition-b CK \
+  --out ./RNAseq_Agar_vs_Glucose \
+  --condition-a Agar \
+  --condition-b Glucose \
   --strand 0 \
-  --adapter /home/hello2/anaconda3/envs/BactRNAseq/share/trimmomatic-0.40-0/adapters/TruSeq3-PE.fa \
   --threads 20
 
 ```
 
 ### Without a GFF3 annotation
 
-Omit `--gff` to trigger automatic Prokka annotation:
+With Prokka on `PATH`, omit `--gff` to trigger automatic annotation.
 
 ```bash
-bash run_bacterial_rnaseq_deseq2.sh \
+pure-bacterial-transcriptome \
   --genome assembly.fna \
   --samples samples.tsv \
   --out RNAseq_conditionA_vs_conditionB \
@@ -165,7 +194,11 @@ The major outputs are written under the directory passed to `--out`:
 ├── clean/                         # Adapter- and quality-trimmed paired/unpaired FASTQ files
 ├── reference/                     # Reference FASTA used for mapping and Bowtie2 index files
 ├── bam/                           # Coordinate-sorted and indexed BAM files
-├── qc/                            # FastQC, MultiQC, flagstat, and idxstats reports
+├── qc/                            # Rust read-quality, flagstat, and idxstats reports
+│   ├── read_qc_report.html
+│   ├── read_qc_summary.tsv
+│   ├── read_qc_by_cycle.tsv
+│   └── read_qc_lengths.tsv
 ├── counts/
 │   ├── raw_counts.sN.txt          # featureCounts raw read-count table
 │   └── raw_counts.sN.txt.summary  # Read-assignment summary for each sample
@@ -178,9 +211,13 @@ The major outputs are written under the directory passed to `--out`:
 │   ├── sample_correlation.pdf
 │   ├── MA_plot.pdf
 │   ├── volcano_DESeq2_<A>_vs_<B>.pdf
+│   ├── volcano_DESeq2_<A>_vs_<B>.png
+│   ├── volcano_source_data_<A>_vs_<B>.csv
 │   └── DESeq2_summary.txt
 └── logs/                          # Step-specific logs and the complete pipeline.log
 ```
+
+The read-quality reports cover trimmed paired FASTQ files. They include read lengths, base composition, Phred quality, Q30 and per-cycle statistics. Use `--no-read-qc` to skip these reports. The older options `--fastqc` and `--no-fastqc` are accepted as aliases for the Rust reports. The Bash entry point still supports the original FastQC and MultiQC reports.
 
 DESeq2 uses its default **median-of-ratios** size-factor normalization, negative-binomial Wald tests, and Benjamini–Hochberg multiple-testing adjustment. Before DESeq2, a gene must have a raw count of at least 10 in at least as many samples as the smaller group size. In the results:
 
@@ -190,11 +227,11 @@ DESeq2 uses its default **median-of-ratios** size-factor normalization, negative
 
 ## Resuming an interrupted run
 
-Run the exact same command again with the **same `--out` directory**. The script skips completed trimming outputs, sorted/indexed BAM files, an existing count table, and an existing Prokka annotation. DESeq2 result files are regenerated.
+Run the same command again with the **same `--out` directory**. The Rust executable uses checkpoints under `.bact-rnaseq/` to reuse completed steps when their inputs and outputs have the same paths, sizes and modification times. DESeq2 result files are regenerated. Use a fresh output directory for the first Rust run if you want to keep the files from a previous Bash run.
 
 ## Mapping command used by this workflow
 
-The mapping step follows the validated Bowtie2 settings used in the original analysis: `bowtie2 --very-sensitive -p 8`, followed by coordinate sorting with four SAMtools threads. With current SAMtools, it uses `samtools sort -@ 4 -o <sample>.sorted.bam`. If the active environment instead has the older `samtools sort <in.bam> <out.prefix>` interface, the script detects it automatically, converts the Bowtie2 SAM to a temporary BAM, and uses the required legacy sort syntax. Each BAM is indexed, checked, and accompanied by `flagstat` and the Bowtie2 overall alignment rate.
+The mapping step uses the original Bowtie2 settings, `bowtie2 --very-sensitive -p 8`. Rust streams Bowtie2's SAM output into coordinate-sorted BAM, using temporary runs and a bounded merge for large inputs. Each BAM has a BAI index and alignment QC metrics. Bowtie2's overall alignment rate is logged per sample.
 
 ## Troubleshooting
 

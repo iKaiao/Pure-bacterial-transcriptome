@@ -1,0 +1,19 @@
+[package]
+name = "pure-bacterial-transcriptome"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.89"
+description = "Paired-end bacterial RNA-seq differential-expression workflow"
+repository = "https://github.com/iKaiao/Pure-bacterial-transcriptome"
+publish = false
+
+[dependencies]
+anyhow = "1.0"
+clap = { version = "4.5", features = ["derive"] }
+flate2 = "1.1"
+noodles-bam = "0.85"
+noodles-sam = "0.81"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tempfile = "3.20"
+which = "8.0"
