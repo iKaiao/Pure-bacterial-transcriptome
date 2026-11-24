@@ -1,6 +1,6 @@
 package:
   name: pure-bacterial-transcriptome
-  version: 0.1.0
+  version: 0.1.1
 
 source:
   path: ..
@@ -34,4 +34,6 @@ test:
 
 about:
   home: https://github.com/iKaiao/Pure-bacterial-transcriptome
+  license: MIT
+  license_file: LICENSE
   summary: Paired-end bacterial RNA-seq differential-expression workflow
