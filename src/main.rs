@@ -1,4 +1,6 @@
 mod bam;
+mod deseq;
+mod deseq_plots;
 mod process;
 mod read_qc;
 mod state;
@@ -38,7 +40,7 @@ pub struct Args {
     /// Trimmomatic adapter FASTA (defaults to TruSeq3-PE.fa in Conda)
     #[arg(long)]
     adapter: Option<PathBuf>,
-    /// Bowtie2 alignment threads
+    /// Threads for Bowtie2 and differential expression
     #[arg(long, default_value_t = 8, value_parser = clap::value_parser!(u32).range(1..))]
     threads: u32,
     /// GFF feature to count

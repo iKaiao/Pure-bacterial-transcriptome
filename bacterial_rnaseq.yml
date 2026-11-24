@@ -10,16 +10,7 @@ dependencies:
   - openjdk=17
   - trimmomatic=0.40
   - bowtie2
-  - samtools
-  - subread
-  - fastqc
-  - multiqc
+  - subread>=2.0.2
 
-  # Automatic bacterial genome annotation when no GFF is provided.
-  - prokka
-
-  # Differential expression analysis and the R runtime used by the script.
-  - r-base
-  - bioconductor-deseq2
-  - r-ggplot2
-  - r-ggrepel
+  # Font fallback for PDF and PNG output on headless systems.
+  - font-ttf-dejavu-sans-mono

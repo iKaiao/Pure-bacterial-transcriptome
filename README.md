@@ -1,25 +1,39 @@
 # Pure-bacterial-transcriptome
 
-A reusable paired-end bacterial RNA-seq differential-expression workflow:
+[![Rust 1.97.1+](https://img.shields.io/badge/Rust-1.97.1%2B-orange)](Cargo.toml)
+[![MIT license](https://img.shields.io/badge/License-MIT-blue)](LICENSE)
 
-`Trimmomatic → Bowtie2 → featureCounts → DESeq2`
+Pure-bacterial-transcriptome is a Rust command-line tool for comparing gene expression between conditions in paired-end bacterial RNA-seq experiments. It takes paired FASTQ reads, a sample manifest, and a reference genome in FASTA format. You can supply a matching GFF3 annotation or generate one with Prokka.
 
-The pipeline is intended for bacterial RNA-seq data with a reference genome. Supply a GFF3 annotation when available. If no GFF3 file is supplied, the script automatically annotates the exact reference FASTA used for mapping with Prokka before read counting and differential-expression analysis.
+The workflow trims reads with Trimmomatic, maps them with Bowtie2, and counts reads per gene with featureCounts. It uses rsdeseq2 for DESeq2-compatible differential expression and produces raw and normalized count tables, read and alignment quality reports, and PCA, sample correlation, MA, and volcano plots. Differential expression and plotting run directly in Rust.
 
-The Rust executable processes the Bowtie2 SAM stream, sorts and indexes BAM files, computes alignment statistics, and produces FASTQ quality reports. It invokes Trimmomatic for trimming, Bowtie2 for alignment, featureCounts for quantification, and R/DESeq2 for differential expression and its plots.
+The project is open source under the [MIT License](LICENSE). For questions and bug reports, use [GitHub Issues](https://github.com/iKaiao/Pure-bacterial-transcriptome/issues).
+
+## Getting started
+
+- [Build and install the local Conda package](#build-and-install-the-conda-package)
+- [Build from source with Cargo](#build-from-source)
+
+## Documentation
+
+- [Prepare the reference genome, annotation, and sample manifest](#2-prepare-the-inputs)
+- [Run the workflow and set library strandedness](#3-run-the-workflow)
+- [Read the output files](#output-files)
+- [Resume an interrupted run](#resuming-an-interrupted-run)
+- [Troubleshoot common issues](#troubleshooting)
 
 ## Repository contents
 
 | File | Purpose |
 | --- | --- |
 | `src/`, `Cargo.toml` | Rust workflow executable |
-| `run_deseq2.R` | Shared DESeq2 analysis and plots, embedded in the Rust executable |
-| `run_bacterial_rnaseq_deseq2.sh` | Original Bash entry point, run with `run_deseq2.R` alongside it |
 | `samples.example.tsv` | Example sample manifest |
-| `bacterial_rnaseq.yml` | Conda environment with all required tools |
+| `bacterial_rnaseq.yml` | Conda runtime environment for runs with a supplied GFF3 |
 | `conda/` | Recipe for building and installing the Rust executable with its analysis dependencies |
 
-## 1. Create the Conda environment
+## 1. Installation
+
+### Build from source
 
 From the repository directory, run:
 
@@ -29,9 +43,9 @@ conda env create -f bacterial_rnaseq.yml
 conda activate BactRNAseq
 ```
 
-The environment contains Trimmomatic, Bowtie2, SAMtools, Subread/featureCounts, FastQC, MultiQC, Prokka, R, and DESeq2. For later runs, activate it with `conda activate BactRNAseq`.
+The environment contains Trimmomatic, Bowtie2, Subread/featureCounts, and a fallback font for the plots. To generate a GFF3 automatically, add Prokka to `PATH` as described below.
 
-Build the Rust executable with Cargo and Rust 1.89 or newer. Run it from the environment above so the analysis tools are on `PATH`.
+Build the Rust executable with Cargo and Rust 1.97.1 or newer. Run it from the environment above so the analysis tools are on `PATH`.
 
 ```bash
 cargo build --locked --release
@@ -42,7 +56,7 @@ On Linux and macOS, use a Conda platform where the analysis dependencies resolve
 
 ### Build and install the Conda package
 
-With `conda-build` available, build from the repository root and install the resulting package from the local channel.
+With `conda-build` available, build from the repository root and install the resulting package from the local channel. The recipe invokes Cargo with the versions recorded in `Cargo.lock`.
 
 ```bash
 CONDA_CHANNEL_PRIORITY=strict conda build --override-channels -c conda-forge -c bioconda \
@@ -65,7 +79,7 @@ Use `--genome` to provide the reference genome FASTA. Common extensions such as 
 
 If a GFF3 annotation is available, provide it with `--gff annotation.gff`. **The contig names in column 1 of the GFF must exactly match the sequence names in the reference FASTA.** Otherwise, featureCounts cannot assign reads to genes.
 
-If no GFF is available, omit `--gff`. The script copies the reference FASTA into the output directory and annotates that copy with Prokka. The generated annotation is saved as:
+If no GFF is available, omit `--gff` with Prokka on `PATH`. The workflow copies the reference FASTA into the output directory and annotates that copy. The generated annotation is saved as:
 
 ```text
 <output_directory>/prokka_annotation/annotation.gff
@@ -86,32 +100,11 @@ Choose the adapter according to the **library-preparation kit stated by the sequ
 
 For paired-end reads, select a file with `PE` in its name, not an `SE` (single-end) file. `TruSeq3-PE.fa` contains the mate-specific adapters needed by Trimmomatic's `ILLUMINACLIP` step.
 
-After activating the pipeline environment, list the adapter files installed with Trimmomatic:
-
-```bash
-conda activate BactRNAseq
-find "$CONDA_PREFIX/share" -type f -path '*trimmomatic*/adapters/*.fa' -print
-```
-
-Typical output includes a path similar to:
-
-```text
-/home/your_user/anaconda3/envs/BactRNAseq/share/trimmomatic-0.40-0/adapters/TruSeq3-PE.fa
-```
-
-Use the full path returned on **your own server**; do not copy the example path literally. Supplying it explicitly is recommended for reproducibility:
-
-```bash
---adapter "$CONDA_PREFIX/share/trimmomatic-0.40-0/adapters/TruSeq3-PE.fa"
-```
+The executable can locate `TruSeq3-PE.fa` under the active Conda environment's `share` directory. To select a different adapter, supply its path with `--adapter`.
 
 ### Sample manifest
 
-Copy and edit the template:
-
-```bash
-cp samples.example.tsv samples.tsv
-```
+Make a copy of `samples.example.tsv` named `samples.tsv` and edit it for your experiment.
 
 The manifest must be **tab-delimited (TSV)** and contain exactly four columns. Each row is one paired-end library:
 
@@ -129,7 +122,7 @@ Notes:
 
 - `sample` values must be unique ignoring case and may contain only letters, numbers, `.`, `_`, and `-`.
 - For a two-group experiment, `condition` values must match `--condition-a` or `--condition-b` exactly.
-- `r1` and `r2` may be absolute paths or paths relative to the directory from which the script is launched.
+- `r1` and `r2` may be absolute paths or paths relative to the working directory.
 - Each group needs at least two biological replicates; three or more are recommended.
 
 ## 3. Run the workflow
@@ -167,7 +160,7 @@ pure-bacterial-transcriptome \
   --threads 12
 ```
 
-The script automatically looks for `TruSeq3-PE.fa` in the active Conda environment. For a different library adapter, provide it explicitly:
+For a different library adapter, append this option:
 
 ```bash
   --adapter /path/to/adapters.fa
@@ -205,9 +198,12 @@ The major outputs are written under the directory passed to `--out`:
 ├── deseq2/
 │   ├── DESeq2_<A>_vs_<B>.csv      # Differential-expression results
 │   ├── raw_counts_matrix.csv      # Raw count matrix
+│   ├── library_sizes_raw_counts.csv
+│   ├── sample_metadata.csv
 │   ├── DESeq2_normalized_counts.csv
 │   ├── DESeq2_size_factors.csv
 │   ├── PCA.pdf
+│   ├── sample_correlation.csv
 │   ├── sample_correlation.pdf
 │   ├── MA_plot.pdf
 │   ├── volcano_DESeq2_<A>_vs_<B>.pdf
@@ -217,9 +213,9 @@ The major outputs are written under the directory passed to `--out`:
 └── logs/                          # Step-specific logs and the complete pipeline.log
 ```
 
-The read-quality reports cover trimmed paired FASTQ files. They include read lengths, base composition, Phred quality, Q30 and per-cycle statistics. Use `--no-read-qc` to skip these reports. The older options `--fastqc` and `--no-fastqc` are accepted as aliases for the Rust reports. The Bash entry point still supports the original FastQC and MultiQC reports.
+The read-quality reports cover trimmed paired FASTQ files. They include read lengths, base composition, Phred quality, Q30 and per-cycle statistics. Use `--no-read-qc` to skip these reports. The older options `--fastqc` and `--no-fastqc` are accepted as aliases for the Rust reports.
 
-DESeq2 uses its default **median-of-ratios** size-factor normalization, negative-binomial Wald tests, and Benjamini–Hochberg multiple-testing adjustment. Before DESeq2, a gene must have a raw count of at least 10 in at least as many samples as the smaller group size. In the results:
+The analysis uses **median-of-ratios** size-factor normalization, negative-binomial Wald tests, Cook's distance filtering, and Benjamini–Hochberg multiple-testing adjustment with independent filtering. In a two-condition manifest, a gene must have a raw count of at least 10 in at least as many samples as the smaller group size. With additional conditions, all genes enter the model, matching the previous workflow. Output filenames retain the `DESeq2` prefix for downstream scripts.
 
 - `log2FoldChange > 0` means higher expression in `condition-a`;
 - `padj < 0.05` denotes BH-adjusted statistical significance;
@@ -227,7 +223,7 @@ DESeq2 uses its default **median-of-ratios** size-factor normalization, negative
 
 ## Resuming an interrupted run
 
-Run the same command again with the **same `--out` directory**. The Rust executable uses checkpoints under `.bact-rnaseq/` to reuse completed steps when their inputs and outputs have the same paths, sizes and modification times. DESeq2 result files are regenerated. Use a fresh output directory for the first Rust run if you want to keep the files from a previous Bash run.
+Run the same command again with the **same `--out` directory**. The executable uses checkpoints under `.bact-rnaseq/` to reuse completed steps when their inputs and outputs have the same paths, sizes and modification times. Differential-expression result files are regenerated. Use a fresh output directory to preserve a previous analysis.
 
 ## Mapping command used by this workflow
 
@@ -238,4 +234,4 @@ The mapping step uses the original Bowtie2 settings, `bowtie2 --very-sensitive -
 1. **featureCounts reports zero Assigned reads:** first check that GFF and FASTA contig names match exactly; then verify `--strand`.
 2. **Trimmomatic cannot find the adapter FASTA:** pass the full path explicitly with `--adapter /full/path/TruSeq3-PE.fa`.
 3. **The contrast is reversed:** confirm the order of `--condition-a` and `--condition-b`. Results are always reported as `condition-a / condition-b`, so positive values are higher in the first condition.
-4. **No GFF is available:** do not manually rename contigs. Omit `--gff` and let the script annotate the current reference FASTA with Prokka.
+4. **No GFF is available:** omit `--gff` to annotate the current reference FASTA with Prokka.

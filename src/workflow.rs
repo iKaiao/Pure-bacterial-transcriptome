@@ -1,7 +1,7 @@
 use crate::process::Runner;
 use crate::state::{State, atomic_write, nonempty};
 use crate::{Args, Sample, input_file, read_samples};
-use crate::{bam, read_qc};
+use crate::{bam, deseq, read_qc};
 use anyhow::{Context, Result, bail, ensure};
 use flate2::read::MultiGzDecoder;
 use std::env;
@@ -11,7 +11,6 @@ use std::path::{Path, PathBuf, absolute};
 use tempfile::{NamedTempFile, TempDir, tempdir_in};
 
 const FIXED_THREADS: &str = "8";
-const R_SCRIPT: &[u8] = include_bytes!("../run_deseq2.R");
 const INDEX_PARTS: [&str; 6] = ["1", "2", "3", "4", "rev.1", "rev.2"];
 
 pub fn run(args: Args) -> Result<()> {
@@ -43,7 +42,6 @@ pub fn run(args: Args) -> Result<()> {
         "bowtie2-build",
         "bowtie2-inspect",
         "featureCounts",
-        "Rscript",
     ];
     if supplied_gff.is_none() {
         tools.push("prokka");
@@ -57,14 +55,7 @@ pub fn run(args: Args) -> Result<()> {
         args.condition_b,
         args.strand,
     ))?;
-    pipeline.runner.run(
-        pipeline.runner.command("Rscript").args([
-            "--vanilla", "-e",
-            "for (p in c('DESeq2','ggplot2','ggrepel')) { if (!requireNamespace(p, quietly=TRUE)) stop(paste('Missing R package', p)); cat(p, as.character(packageVersion(p)), '\\n') }",
-        ]),
-        "R-packages.log", None,
-    )?;
-    let sample_copy = pipeline.write_manifest(&samples)?;
+    pipeline.write_manifest(&samples)?;
     let reference = pipeline.prepare_reference(&genome)?;
     let gff = match supplied_gff {
         Some(path) => path,
@@ -86,7 +77,7 @@ pub fn run(args: Args) -> Result<()> {
         bams.push(pipeline.map(sample, paired, args.threads)?);
     }
     let counts = pipeline.count(&args, &gff, &bams)?;
-    pipeline.differential_expression(&args, &counts, &sample_copy, &tag)?;
+    pipeline.differential_expression(&args, &counts, &samples, &tag)?;
     pipeline.runner.message(&format!(
         "Workflow complete\nDESeq2 results: {}",
         pipeline
@@ -124,7 +115,7 @@ impl Pipeline {
         self.state.record(name, &inputs, options, outputs)
     }
 
-    fn write_manifest(&self, samples: &[Sample]) -> Result<PathBuf> {
+    fn write_manifest(&self, samples: &[Sample]) -> Result<()> {
         let path = self.out.join("samples.tsv");
         let mut manifest = b"sample\tcondition\tr1\tr2\n".to_vec();
         for sample in samples {
@@ -140,7 +131,7 @@ impl Pipeline {
         if !fs::read(&path).is_ok_and(|existing| existing == manifest) {
             atomic_write(&path, &manifest)?;
         }
-        Ok(path)
+        Ok(())
     }
 
     fn prepare_reference(&self, genome: &Path) -> Result<PathBuf> {
@@ -449,28 +440,21 @@ impl Pipeline {
         &self,
         args: &Args,
         counts: &Path,
-        manifest: &Path,
+        samples: &[Sample],
         tag: &str,
     ) -> Result<()> {
         self.runner.message("DESeq2")?;
         let directory = self.out.join("deseq2");
         let temporary = tempdir_in(&directory)?;
-        let script_name = format!("run_deseq2_{tag}.R");
-        let script = temporary.path().join(&script_name);
-        fs::write(&script, R_SCRIPT)?;
-        self.runner.run(
-            self.runner
-                .command("Rscript")
-                .arg("--vanilla")
-                .arg(script)
-                .arg(counts)
-                .arg(manifest)
-                .arg(&args.condition_a)
-                .arg(&args.condition_b)
-                .arg(temporary.path()),
-            "DESeq2.log",
-            None,
-        )?;
+        let log_path = self.runner.log_path("DESeq2.log");
+        let mut log = File::create(&log_path)?;
+        let analysis = deseq::run(args, counts, samples, tag, temporary.path(), &mut log);
+        if let Err(error) = &analysis {
+            let _ = writeln!(log, "{error:#}");
+        }
+        analysis.with_context(|| {
+            format!("Differential expression failed. See {}", log_path.display())
+        })?;
         let mut files = [
             "raw_counts_matrix.csv",
             "library_sizes_raw_counts.csv",
@@ -491,7 +475,6 @@ impl Pipeline {
                 format!("volcano_source_data_{tag}.csv"),
                 format!("volcano_DESeq2_{tag}.pdf"),
                 format!("volcano_DESeq2_{tag}.png"),
-                script_name,
             ]
             .map(|name| directory.join(name)),
         );

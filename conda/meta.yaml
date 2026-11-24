@@ -6,12 +6,13 @@ source:
   path: ..
 
 build:
-  number: 0
+  number: 1
   skip: true  # [win]
+  script: cargo install --locked --no-track --path . --root "$PREFIX"
 
 requirements:
   build:
-    - rust >=1.89
+    - {{ compiler('rust') }}
     - {{ compiler('c') }}
     - {{ stdlib('c') }}
   run:
@@ -19,10 +20,7 @@ requirements:
     - trimmomatic 0.40.*
     - bowtie2
     - subread >=2.0.2
-    - r-base
-    - bioconductor-deseq2
-    - r-ggplot2
-    - r-ggrepel
+    - font-ttf-dejavu-sans-mono
 
 test:
   commands:
@@ -30,7 +28,6 @@ test:
     - pure-bacterial-transcriptome --help
     - bowtie2 --version
     - featureCounts -v
-    - Rscript --vanilla -e 'stopifnot(requireNamespace("DESeq2"), requireNamespace("ggplot2"), requireNamespace("ggrepel"))'
 
 about:
   home: https://github.com/iKaiao/Pure-bacterial-transcriptome
